@@ -1,9 +1,6 @@
 # HotmailJunkMailDeleter
 Delete junk messages from Hotmail's Junk Email folder using keywords
 
-#### What does the app do:
-This is a little .NET 6.0 console app that deletes messages in Hotmail's Junk Email folder based on keywords in the from field or subject line or in the message body.   
-
 #### 
 ##### Why was it built:
 I created it because I was noticing the same few spam messages appearing very often in my Hotmail Junk Email folder and after months of seeing them, I decided I didn't want to see them anymore. 
