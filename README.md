@@ -1,5 +1,5 @@
 # HotmailJunkMailDeleter
-Delete junk messages from Hotmail's Junk Email folder using keywords
+Deletes messages from Hotmail's Junk Email folder using keywords
 
 #### 
 ##### Why was it built:
