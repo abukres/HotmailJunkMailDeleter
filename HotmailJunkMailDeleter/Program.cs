@@ -93,6 +93,7 @@ internal class Program
                 DeleteBySubject(httpClient, message, messageId);
                 DeleteByFrom(httpClient, message, messageId);
                 DeleteByBody(httpClient, message, messageId);
+                await Task.Delay(300);
             }
         }
     }
@@ -106,18 +107,42 @@ internal class Program
 
         foreach (string keyword in lines)
             if (subject.ToLower().Contains(keyword.ToLower()))
+            {
                 await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
+                return;
+            }
     }
 
     private static async Task DeleteByFrom(HttpClient httpClient, JsonElement message, string messageId)
     {
+        string from;
         string currentFolderPath = Directory.GetCurrentDirectory();
-        string from = message.GetProperty("from").GetString();
+        if (message.TryGetProperty("from", out JsonElement fromElement))
+        {
+            if (fromElement.TryGetProperty("emailAddress", out JsonElement emailAddressElement) &&
+                emailAddressElement.TryGetProperty("name", out JsonElement nameElement))
+            {
+                from = nameElement.GetString();
+            }
+            else
+            {
+                from = fromElement.GetString();
+            }
+            
+        }
+        else
+        {
+            return;
+        }
+        //string from = message.GetProperty("from").GetString();
         string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamFrom.txt");
 
         foreach (string keyword in lines)
             if (from.ToLower().Contains(keyword.ToLower()))
+            {
                 await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
+                return;
+            }
     }
 
     private static async Task DeleteByBody(HttpClient httpClient, JsonElement message, string messageId)
@@ -136,7 +161,10 @@ internal class Program
         else
             foreach (string keyword in lines)
                 if (body.ToLower().Contains(keyword.ToLower()))
+                {
                     await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
+                    return;
+                }
     }
 
     private static string RemoveHtmlTags(string input)
