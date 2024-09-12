@@ -13,11 +13,13 @@ internal class Program
     private static readonly object FileLock = new();
     private static IPublicClientApplication app;
     private static readonly string[] Scopes = new string[] { "User.Read", "Mail.Read", "Mail.ReadWrite" };
+    
 
 
     private static async Task Main(string[] args)
     {
         AuthenticationResult result;
+        
 
         try
         {
@@ -74,12 +76,13 @@ internal class Program
 
     private static async Task FilterAndDeleteJunkEmails(string accessToken)
     {
+        bool isDeleted = false;
         HttpClient httpClient = new();
         httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
         HttpResponseMessage response =
-            await httpClient.GetAsync(
-                $"https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages?$select=body,from, subject");
+            await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages?$select=body,from, subject&$top=100");
+        
 
         if (response.IsSuccessStatusCode)
         {
@@ -90,16 +93,18 @@ internal class Program
             foreach (JsonElement message in messages)
             {
                 string messageId = message.GetProperty("id").GetString();
-                DeleteBySubject(httpClient, message, messageId);
-                DeleteByFrom(httpClient, message, messageId);
-                DeleteByBody(httpClient, message, messageId);
+                isDeleted = await DeleteBySubject(httpClient, message, messageId);
+                if (!isDeleted)
+                    isDeleted = await DeleteByFrom(httpClient, message, messageId);
+                if (!isDeleted)
+                    isDeleted = await DeleteByBody(httpClient, message, messageId);
                 await Task.Delay(300);
             }
         }
     }
 
 
-    private static async Task DeleteBySubject(HttpClient httpClient, JsonElement message, string messageId)
+    private static async Task<bool> DeleteBySubject(HttpClient httpClient, JsonElement message, string messageId)
     {
         string currentFolderPath = Directory.GetCurrentDirectory();
         string subject = message.GetProperty("subject").GetString();
@@ -109,11 +114,13 @@ internal class Program
             if (subject.ToLower().Contains(keyword.ToLower()))
             {
                 await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
-                return;
+                return true;
             }
+
+        return false;
     }
 
-    private static async Task DeleteByFrom(HttpClient httpClient, JsonElement message, string messageId)
+    private static async Task<bool> DeleteByFrom(HttpClient httpClient, JsonElement message, string messageId)
     {
         string from;
         string currentFolderPath = Directory.GetCurrentDirectory();
@@ -132,7 +139,7 @@ internal class Program
         }
         else
         {
-            return;
+            return false;
         }
         //string from = message.GetProperty("from").GetString();
         string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamFrom.txt");
@@ -141,30 +148,57 @@ internal class Program
             if (from.ToLower().Contains(keyword.ToLower()))
             {
                 await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
-                return;
+                return true;
             }
+        
+        return false;
     }
 
-    private static async Task DeleteByBody(HttpClient httpClient, JsonElement message, string messageId)
+    private static async Task<bool> DeleteByBody(HttpClient httpClient, JsonElement message, string messageId)
     {
-        string currentFolderPath = Directory.GetCurrentDirectory();
-        string body = message.GetProperty("body").GetString();
-        string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamBody.txt");
+        string test;
+        string body;
+            
+        try
+        {
+            string currentFolderPath = Directory.GetCurrentDirectory();
+            test = message.ToString();
+            
+            
+            if (message.TryGetProperty("body", out JsonElement bodyElement2))
+            {
+                body = bodyElement2.GetProperty("content").GetString();
+            }
+            else
+                body = message.GetProperty("body").GetString();
+            
+            
+            string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamBody.txt");
+            string noTags = Regex.Replace(RemoveHtmlTags(body), @"\s+", string.Empty);
 
-        JsonElement bodyElement = message.GetProperty("body");
-        string content = bodyElement.GetProperty("content").GetString();
-        string noTags = Regex.Replace(RemoveHtmlTags(content), @"\s+", string.Empty);
+            // body likely has only an image. Delete the message
+            if (string.IsNullOrEmpty(noTags))
+            {
+                await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
+                return true;
+            }
+            else
+                foreach (string keyword in lines)
+                    if (body.ToLower().Contains(keyword.ToLower()))
+                    {
+                        await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
+                        return true;
+                    }
+            
+            return false;
+        }
+        catch (Exception ex)
+        {
+            
+            var innerMessage = ex.InnerException?.Message;
 
-        // body likely has only an image. Delete the message
-        if (string.IsNullOrEmpty(noTags))
-            await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
-        else
-            foreach (string keyword in lines)
-                if (body.ToLower().Contains(keyword.ToLower()))
-                {
-                    await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
-                    return;
-                }
+            throw;
+        }
     }
 
     private static string RemoveHtmlTags(string input)
