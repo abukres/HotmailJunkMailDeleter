@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
 
@@ -13,22 +14,21 @@ internal class Program
     private static readonly object FileLock = new();
     private static IPublicClientApplication app;
     private static readonly string[] Scopes = new string[] { "User.Read", "Mail.Read", "Mail.ReadWrite" };
-    
 
 
     private static async Task Main(string[] args)
     {
         AuthenticationResult result;
-        
+
 
         try
         {
-            var configuration = new ConfigurationBuilder()
+            IConfigurationRoot configuration = new ConfigurationBuilder()
                 .SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                .AddJsonFile("appsettings.json", false, true)
                 .Build();
             string clientId = configuration["ClientId"];
-            
+
             app = PublicClientApplicationBuilder.Create(clientId)
                 .WithAuthority(AzureCloudInstance.AzurePublic, "consumers")
                 .WithRedirectUri("http://localhost:8888")
@@ -79,26 +79,46 @@ internal class Program
         bool isDeleted = false;
         HttpClient httpClient = new();
         httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        string messageId = null;
 
         HttpResponseMessage response =
-            await httpClient.GetAsync($"https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages?$select=body,from, subject&$top=100");
-        
+            await httpClient.GetAsync(
+                $"https://graph.microsoft.com/v1.0/me/mailFolders/junkemail/messages?$select=body,from, subject&$top=100");
+
 
         if (response.IsSuccessStatusCode)
         {
             string content = await response.Content.ReadAsStringAsync();
             JsonDocument jsonDocument = JsonDocument.Parse(content);
-            JsonElement.ArrayEnumerator messages = jsonDocument.RootElement.GetProperty("value").EnumerateArray();
-
-            foreach (JsonElement message in messages)
+            JsonElement root = jsonDocument.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("value", out JsonElement valueElement))
             {
-                string messageId = message.GetProperty("id").GetString();
-                isDeleted = await DeleteBySubject(httpClient, message, messageId);
-                if (!isDeleted)
-                    isDeleted = await DeleteByFrom(httpClient, message, messageId);
-                if (!isDeleted)
-                    isDeleted = await DeleteByBody(httpClient, message, messageId);
-                await Task.Delay(300);
+                if (valueElement.ValueKind == JsonValueKind.Array)
+                {
+                    JsonElement.ArrayEnumerator arrayEnumerator = valueElement.EnumerateArray();
+                    foreach (JsonElement message in arrayEnumerator)
+                    {
+                        if (message.TryGetProperty("id", out JsonElement idElement))
+                        {
+                            messageId = idElement.GetString();
+                        }
+
+                        isDeleted = await DeleteBySubject(httpClient, message, messageId);
+                        if (!isDeleted)
+                            isDeleted = await DeleteByFrom(httpClient, message, messageId);
+                        if (!isDeleted)
+                            await DeleteByBody(httpClient, message, messageId);
+                        await Task.Delay(300);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("The 'value' property is not of type array.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("The 'value' property is not found or is not of type object.");
             }
         }
     }
@@ -128,20 +148,15 @@ internal class Program
         {
             if (fromElement.TryGetProperty("emailAddress", out JsonElement emailAddressElement) &&
                 emailAddressElement.TryGetProperty("name", out JsonElement nameElement))
-            {
                 from = nameElement.GetString();
-            }
             else
-            {
                 from = fromElement.GetString();
-            }
-            
         }
         else
         {
             return false;
         }
-        //string from = message.GetProperty("from").GetString();
+
         string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamFrom.txt");
 
         foreach (string keyword in lines)
@@ -150,29 +165,24 @@ internal class Program
                 await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
                 return true;
             }
-        
+
         return false;
     }
 
     private static async Task<bool> DeleteByBody(HttpClient httpClient, JsonElement message, string messageId)
     {
-        string test;
         string body;
-            
+
         try
         {
             string currentFolderPath = Directory.GetCurrentDirectory();
-            test = message.ToString();
-            
-            
-            if (message.TryGetProperty("body", out JsonElement bodyElement2))
-            {
-                body = bodyElement2.GetProperty("content").GetString();
-            }
+
+            if (message.TryGetProperty("body", out JsonElement bodyElement))
+                body = bodyElement.GetProperty("content").GetString();
             else
                 body = message.GetProperty("body").GetString();
-            
-            
+
+
             string[] lines = File.ReadAllLines($@"{currentFolderPath}\SpamBody.txt");
             string noTags = Regex.Replace(RemoveHtmlTags(body), @"\s+", string.Empty);
 
@@ -183,19 +193,20 @@ internal class Program
                 return true;
             }
             else
+            {
                 foreach (string keyword in lines)
                     if (body.ToLower().Contains(keyword.ToLower()))
                     {
                         await httpClient.DeleteAsync($"https://graph.microsoft.com/v1.0/me/messages/{messageId}");
                         return true;
                     }
-            
+            }
+
             return false;
         }
         catch (Exception ex)
         {
-            
-            var innerMessage = ex.InnerException?.Message;
+            string? innerMessage = ex.InnerException?.Message;
 
             throw;
         }
@@ -209,8 +220,8 @@ internal class Program
     private static void BeforeAccessNotification(TokenCacheNotificationArgs args)
     {
         lock (FileLock)
-        { 
-            if (System.IO.File.Exists(CacheFilePath))
+        {
+            if (File.Exists(CacheFilePath))
             {
                 byte[] encryptedData = System.IO.File.ReadAllBytes(CacheFilePath);
                 byte[]? data = ProtectedData.Unprotect(encryptedData, null, DataProtectionScope.CurrentUser);
@@ -226,7 +237,7 @@ internal class Program
             {
                 byte[]? data = args.TokenCache.SerializeMsalV3();
                 byte[]? encryptedData = ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser);
-                System.IO.File.WriteAllBytes(CacheFilePath, encryptedData);
+                File.WriteAllBytes(CacheFilePath, encryptedData);
             }
     }
 }
