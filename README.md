@@ -6,6 +6,10 @@ Deletes messages from Hotmail's Junk Email folder using keywords
 I created it because I was noticing the same few spam messages appearing very often in my Hotmail Junk Email folder and after months of seeing them, I decided I didn't want to see them anymore. 
 It's unfortunate that the custom rules that users can create in Hotmail do not get applied to the Junk folder. So you're stuck with deleting them manually or waiting 10 days for Hotmail to delete them for you. Fewer messages in the junk folder means less time spent scanning the folder for valid messages. The more keywords to scan against and the higher frequency the app is running, the fewer spam you'll have in the junk email folder.
 
+I have this app running once every hour on my home computer through the task scheduler. My junk folder rarely has more than 5 messages. Hotmail still sometimes puts valid messages in the junk folder.
+Since this app is .NET core based, it might run on Linux and MacOS. I use Windows only.
+
+
 #### How to use:
 
 * The first version of this app used IMAP and it seems Hotmail disabled this type of access.
